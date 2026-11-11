@@ -353,160 +353,90 @@ export default function Client() {
         if (pollRef.current) clearInterval(pollRef.current);
     }
 
-    async function persistPaymentAndGetId(freshJob: JobItem, freshReferral: ReferralRow, freshCompany: Company | null, pspId: string | null) {
-        const fee = getFeeForJob(freshJob);
-        let paymentId: string | null = null;
-        setPayDbStatus('saving');
+    /**
+     * El backend confirma el pago con el webhook de la pasarela: registra el pago,
+     * marca el referido como Contratado y crea la comisión del reclutador.
+     * Aquí solo se refleja en pantalla y se avisa a los involucrados.
+     */
+    async function onPaymentApproved() {
+        setPayStatus('approved');
+        setPayDbStatus('ok');
+        const freshReferral = payForReferralRef.current;
+        const freshJob = payForJobRef.current;
+        if (!freshReferral || !freshJob) return;
+
+        setModalRefs(prev => prev.map(r => r.id === freshReferral.id ? { ...r, status: 'hired' } : r));
+
+        const candId = freshReferral.candidate_id || undefined;
+        const candName = candId ? (candMapRef.current[candId]?.name || '') : '';
         try {
-            const created = await restJson<{ id?: string }>('/api/payments', {
-                method: 'POST',
-                headers: { 'content-type': 'application/json' },
-                body: JSON.stringify({
-                    jobOfferId: freshJob.id,
-                    headhunterId: freshReferral.headhunter_id ?? null,
-                    companyId: freshCompany?.id ?? null,
-                    amount: fee.amount,
-                    currency: fee.currency,
-                    direction: 'out',
-                    pspPaymentId: pspId ?? undefined,
-                }),
-            });
-            paymentId = created?.id ?? null;
-            if (paymentId) {
-                await restJson(`/api/payments/${encodeURIComponent(paymentId)}`, {
-                    method: 'PATCH',
-                    headers: { 'content-type': 'application/json' },
-                    body: JSON.stringify({ status: 'succeeded', pspPaymentId: pspId ?? undefined }),
-                });
+            if (candId && freshJob?.title) {
+                await createNotificationForCandidate({ candidateId: candId, jobTitle: freshJob.title, newStatus: 'hired', jobId: freshJob.id });
             }
-            setPayDbStatus('ok');
-        } catch {
-            try {
-                const created2 = await restJson<{ id?: string }>('/api/payments/create', {
-                    method: 'POST',
-                    headers: { 'content-type': 'application/json' },
-                    body: JSON.stringify({
-                        jobOfferId: freshJob.id,
-                        headhunterId: freshReferral.headhunter_id ?? null,
-                        companyId: freshCompany?.id ?? null,
-                        amount: fee.amount,
-                        currency: fee.currency,
-                        direction: 'out',
-                        pspPaymentId: pspId ?? undefined,
-                    }),
-                });
-                paymentId = created2?.id ?? null;
-                if (paymentId) {
-                    await restJson(`/api/payments/${encodeURIComponent(paymentId)}`, {
-                        method: 'PATCH',
-                        headers: { 'content-type': 'application/json' },
-                        body: JSON.stringify({ status: 'succeeded', pspPaymentId: pspId ?? undefined }),
-                    });
-                }
-                setPayDbStatus('ok');
-            } catch {
-                setPayDbStatus('failed');
+            if (freshReferral.headhunter_id && freshJob?.title) {
+                await createNotificationForHeadhunter({ headhunterId: freshReferral.headhunter_id, candidateName: candName, jobTitle: freshJob.title, newStatus: 'hired', jobId: freshJob.id });
             }
-        }
-        return paymentId;
+        } catch { }
     }
 
-    function startPolling(preferenceId: string) {
+    /** Consulta nuestro registro del pago (no la pasarela) hasta que el webhook lo confirme. */
+    function startPolling(paymentId: string) {
         if (pollRef.current) clearInterval(pollRef.current);
+        const startedAt = Date.now();
         pollRef.current = setInterval(async () => {
             try {
-                const data = await restJson<any>(`/api/check-preference?pref_id=${encodeURIComponent(preferenceId)}`);
-                if (data?.payment_id) setPayPaymentId(String(data.payment_id));
-                if (data.status === 'approved') {
-                    setPayStatus('approved');
+                const p = await restJson<{ status?: string }>(`/api/payments/${encodeURIComponent(paymentId)}`);
+                const st = String(p?.status ?? '').toLowerCase();
+                if (st === 'succeeded') {
                     if (pollRef.current) clearInterval(pollRef.current);
-                    const freshReferral = payForReferralRef.current;
-                    const freshJob = payForJobRef.current;
-                    const freshCompany = companyRef.current;
-                    const pspId = data?.payment_id ? String(data.payment_id) : (payPaymentId ?? null);
-                    if (!freshReferral || !freshJob) return;
-
-                    const paymentId = await persistPaymentAndGetId(freshJob, freshReferral, freshCompany, pspId);
-
-                    try {
-                        await restJson(`/api/referrals/${encodeURIComponent(freshReferral.id)}`, {
-                            method: 'PATCH',
-                            headers: { 'content-type': 'application/json' },
-                            body: JSON.stringify({
-                                status: 'hired',
-                                paymentId: paymentId ?? undefined,
-                                pspPaymentId: pspId ?? undefined,
-                                jobOfferId: freshJob.id,
-                                companyId: freshCompany?.id ?? undefined,
-                                headhunterId: freshReferral.headhunter_id ?? undefined,
-                                paymentStatus: 'succeeded',
-                            }),
-                        });
-                        setModalRefs(prev => prev.map(r => r.id === freshReferral.id ? { ...r, status: 'hired' } : r));
-                    } catch {
-                        try {
-                            await restJson(`/api/referrals/update-status`, {
-                                method: 'POST',
-                                headers: { 'content-type': 'application/json' },
-                                body: JSON.stringify({
-                                    id: freshReferral.id,
-                                    status: 'HIRED',
-                                    paymentId: paymentId ?? undefined,
-                                    pspPaymentId: pspId ?? undefined,
-                                    jobOfferId: freshJob.id,
-                                    companyId: freshCompany?.id ?? undefined,
-                                    headhunterId: freshReferral.headhunter_id ?? undefined,
-                                    paymentStatus: 'succeeded',
-                                }),
-                            });
-                            setModalRefs(prev => prev.map(r => r.id === freshReferral.id ? { ...r, status: 'hired' } : r));
-                        } catch {
-                            setPayError('Pago aprobado, pero no se pudo actualizar la referencia.');
-                        }
-                    }
-
-                    const candId = freshReferral.candidate_id || undefined;
-                    const candName = candId ? (candMapRef.current[candId]?.name || '') : '';
-                    try {
-                        if (candId && freshJob?.title) {
-                            await createNotificationForCandidate({ candidateId: candId, jobTitle: freshJob.title, newStatus: 'hired', jobId: freshJob.id });
-                        }
-                        if (freshReferral.headhunter_id && freshJob?.title) {
-                            await createNotificationForHeadhunter({ headhunterId: freshReferral.headhunter_id, candidateName: candName, jobTitle: freshJob.title, newStatus: 'hired', jobId: freshJob.id });
-                        }
-                    } catch { }
-                } else if (data.status === 'rejected') {
+                    await onPaymentApproved();
+                } else if (st === 'failed') {
+                    if (pollRef.current) clearInterval(pollRef.current);
                     setPayStatus('rejected');
+                } else if (Date.now() - startedAt > 30 * 60 * 1000) {
                     if (pollRef.current) clearInterval(pollRef.current);
+                    setPayStatus('error');
+                    setPayError('Aún no recibimos la confirmación del pago. Revisa el estado más tarde en Finanzas.');
                 } else {
                     setPayStatus('waiting');
                 }
             } catch { }
-        }, 3000);
+        }, 4000);
     }
 
+    /** Solo se envía el referido: el monto lo calcula el backend con la tabla de tarifas. */
     async function beginPayment() {
         try {
             setPayError(null);
             setPayStatus('creating');
-            const fee = getFeeForJob(payForJob);
-            const title = payForJob?.title ? `Fee contratación: ${payForJob.title}` : 'Fee contratación';
-            const data = await restJson<{ init_point?: string; preference_id?: string; error?: string }>(
-                '/api/create-preference',
-                { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ amount: fee.amount, currency: fee.currency, title }) }
-            );
-            if (!data?.init_point || !data?.preference_id) {
+            const referral = payForReferralRef.current ?? payForReferral;
+            if (!referral) {
                 setPayStatus('error');
-                setPayError(data?.error || 'No se pudo crear la preferencia');
+                setPayError('No se encontró el referido a contratar.');
                 return;
             }
-            setPayPrefId(data.preference_id);
+            const data = await restJson<{ checkoutUrl?: string; paymentId?: string }>('/api/payments/checkout', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ referralId: referral.id }),
+            });
+            if (!data?.checkoutUrl || !data?.paymentId) {
+                setPayStatus('error');
+                setPayError('No se pudo iniciar el pago.');
+                return;
+            }
+            setPayPaymentId(data.paymentId);
             setPayStatus('waiting');
-            window.open(data.init_point, '_blank', 'noopener,noreferrer');
-            startPolling(data.preference_id);
+            window.open(data.checkoutUrl, '_blank', 'noopener,noreferrer');
+            startPolling(data.paymentId);
         } catch (e: any) {
             setPayStatus('error');
-            setPayError(e?.message || 'Error iniciando el pago');
+            const msg = String(e?.message || '');
+            setPayError(
+                msg.includes('job_salary_required')
+                    ? 'La vacante no tiene monto de la posición; agrégalo para calcular el fee.'
+                    : msg || 'Error iniciando el pago'
+            );
         }
     }
 
