@@ -58,3 +58,31 @@ export async function PATCH(req: NextRequest, context: any) {
         return NextResponse.json({ error: e?.message || 'payments_id_proxy_error' }, { status: 500 });
     }
 }
+
+/** Consulta el estado de un pago (lo usa la pantalla de cobro mientras espera la confirmación del webhook). */
+export async function GET(req: NextRequest, context: any) {
+    try {
+        const { id } = await context.params;
+        if (!id) return NextResponse.json({ error: 'missing_id' }, { status: 400 });
+
+        const API = resolveApiUrl(req);
+        const authorization = buildAuthHeader(req);
+        const upstream = await fetch(`${API}/payments/${encodeURIComponent(id)}`, {
+            method: 'GET',
+            headers: {
+                Accept: 'application/json',
+                ...(authorization ? { Authorization: authorization } : {}),
+            },
+            cache: 'no-store',
+        });
+
+        const parsed = await readUpstream(upstream);
+        if (!parsed.ok) {
+            const msg = (parsed.data && (parsed.data.error || parsed.data.message)) || `payments_get_upstream_${parsed.status}`;
+            return NextResponse.json({ error: msg }, { status: parsed.status || 502 });
+        }
+        return NextResponse.json(parsed.data ?? {}, { status: 200 });
+    } catch (e: any) {
+        return NextResponse.json({ error: e?.message || 'payments_id_proxy_error' }, { status: 500 });
+    }
+}

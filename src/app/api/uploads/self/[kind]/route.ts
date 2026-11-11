@@ -90,7 +90,7 @@ export async function POST(
       );
     }
 
-    const { jwt, payload, source } = pickBestJwt(req);
+    const { jwt, payload } = pickBestJwt(req);
 
     if (!jwt) {
       return NextResponse.json(
@@ -144,9 +144,8 @@ export async function POST(
       {
         method: "POST",
         headers: {
-          "x-user-id": String(userId),
-          "x-internal-gateway": "next-proxy",
-          "x-auth-source": source ?? "unknown",
+          // El backend identifica al usuario por el token verificado (ya no por x-user-id).
+          Authorization: `Bearer ${jwt}`,
         },
         body: fd,
         cache: "no-store",
