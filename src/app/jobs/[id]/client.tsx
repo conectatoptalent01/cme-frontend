@@ -6,6 +6,7 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import styles from "./jobs.module.css";
 import { PropagateLoader } from "react-spinners";
+import { employmentTypeLabel } from "../../../../lib/employment-type";
 
 type Props = { jobId: string };
 
@@ -292,7 +293,7 @@ export default function JobDetailClient({ jobId }: Props) {
                         </div>
                         <div className={styles.meta}>
                             <span>
-                                <b>Tipo:</b> {job.employment_type ?? "—"}
+                                <b>Tipo:</b> {employmentTypeLabel(job.employment_type)}
                             </span>
                             <span className={styles.dot}>•</span>
                             <span>

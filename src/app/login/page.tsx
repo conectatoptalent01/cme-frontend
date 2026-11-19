@@ -7,6 +7,7 @@ import CMELOGO from '../../../public/images/CMELOGO.png';
 import Google from '../../../public/images/icons/Google.png';
 import { Eye, EyeOff } from "lucide-react";
 import { useRouter } from 'next/navigation';
+import { nextFromLocation } from '../../../lib/safe-next';
 import { supabase } from '../../../lib/supabase-client';
 
 export default function Login() {
@@ -25,11 +26,14 @@ export default function Login() {
 
     const handleRegister = (e: React.MouseEvent<HTMLAnchorElement | HTMLButtonElement>) => {
         e.preventDefault();
-        router.push("/register");
+        const next = nextFromLocation("");
+        router.push(next ? `/register?next=${encodeURIComponent(next)}` : "/register");
     };
 
     async function signInWithGoogle() {
-        const redirectTo = `${window.location.origin}/auth/callback`;
+        const next = nextFromLocation("");
+        if (next) window.sessionStorage.setItem("post_login_next", next);
+        const redirectTo = `${window.location.origin}/auth/callback${next ? `?next=${encodeURIComponent(next)}` : ""}`;
         const { error } = await supabase.auth.signInWithOAuth({
             provider: 'google',
             options: { redirectTo }
@@ -65,7 +69,6 @@ export default function Login() {
 
         setLoading(true);
         try {
-            console.log("[login] enviando:", { email, password, rememberMe });
             const res = await fetch("/api/login", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -74,7 +77,7 @@ export default function Login() {
             });
             const json = await res.json();
             if (!res.ok) throw new Error(json.error || "Login failed");
-            router.push("/");
+            router.push(nextFromLocation("/"));
         } catch (err: any) {
             const message = typeof err?.message === 'string' ? err.message : 'Error desconocido';
             setFormError(mapGraphQLError(message));

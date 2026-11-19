@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import styles from './active.module.css';
 import { PropagateLoader } from 'react-spinners';
+import { employmentTypeLabel } from "../../../../lib/employment-type";
 
 type Referral = {
     id: string;
@@ -13,6 +14,10 @@ type Referral = {
     status: string;
     created_at: string;
     updated_at: string | null;
+    // invitación por WhatsApp pendiente (se borran al aceptar, rechazar o vencer)
+    invitee_first_name?: string | null;
+    invitee_last_name?: string | null;
+    invite_expires_at?: string | null;
 };
 
 type JobMin = {
@@ -85,6 +90,7 @@ function humanStatus(s?: string) {
         rejected: 'Rechazado',
         shortlist: 'Shortlist',
         hired: 'Contratado',
+        expired: 'Venció sin respuesta',
     };
     const k = (s || '').toLowerCase();
     return map[k] ?? (s || '—');
@@ -302,7 +308,7 @@ export default function MyReferralsPage() {
                                                 <div className={styles.jobMeta}>
                                                     <span>{job?.location ?? '—'}</span>
                                                     <span>•</span>
-                                                    <span>{job?.employment_type ?? '—'}</span>
+                                                    <span>{employmentTypeLabel(job?.employment_type)}</span>
                                                     <span>•</span>
                                                     <span className={`${styles.pill} ${styles.pillInfo}`}>{job?.status ?? '—'}</span>
                                                 </div>
@@ -311,7 +317,12 @@ export default function MyReferralsPage() {
                                             <div className={styles.rowBottom}>
                                                 <div className={styles.metaRow}>
                                                     <span className={styles.metaLabel}>Referido</span>
-                                                    <span>{prof?.full_name ?? (r.candidate_id ? `ID ${r.candidate_id.slice(0, 8)}…` : '—')}</span>
+                                                    <span>
+                                                        {prof?.full_name
+                                                            ?? (r.invitee_first_name
+                                                                ? `${r.invitee_first_name} ${r.invitee_last_name ?? ''} · invitación pendiente${r.invite_expires_at ? ` (vence ${new Date(r.invite_expires_at).toLocaleDateString('es-PA', { day: 'numeric', month: 'short' })})` : ''}`
+                                                                : (r.candidate_id ? `ID ${r.candidate_id.slice(0, 8)}…` : '—'))}
+                                                    </span>
                                                 </div>
 
                                                 <div className={styles.metaRow}>

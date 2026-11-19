@@ -8,6 +8,7 @@ import Google from '../../../public/images/icons/Google.png';
 import Facebook from '../../../public/images/icons/Facebook.png';
 import { Eye, EyeOff } from "lucide-react";
 import { useRouter } from 'next/navigation';
+import { nextFromLocation } from '../../../lib/safe-next';
 
 type Role = 'candidate' | 'headhunter' | 'admin';
 
@@ -30,7 +31,11 @@ export default function Register() {
 
   const router = useRouter();
 
-  const handleRegisterLink = (e: React.MouseEvent<HTMLAnchorElement>) => { e.preventDefault(); router.push("/login") };
+  const handleRegisterLink = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    e.preventDefault();
+    const next = nextFromLocation("");
+    router.push(next ? `/login?next=${encodeURIComponent(next)}` : "/login");
+  };
 
   const phone = useMemo(() => {
     const cc = countryCode.trim().startsWith('+') ? countryCode.trim() : `+${countryCode.trim()}`;
@@ -85,9 +90,8 @@ export default function Register() {
 
       if (!res.ok) throw new Error(json?.error || `HTTP ${res.status}`);
 
-      const params = new URLSearchParams(window.location.search);
-      const next = params.get("next") || "/dashboard";
-      router.push("/login");
+      const next = nextFromLocation("");
+      router.push(next ? `/login?next=${encodeURIComponent(next)}` : "/login");
     } catch (err: any) {
       setFormError(err?.message || 'Ocurrió un error al registrar la cuenta.');
     } finally {

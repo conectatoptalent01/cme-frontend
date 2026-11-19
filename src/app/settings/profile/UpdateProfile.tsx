@@ -3,12 +3,24 @@
 import React, { useEffect, useMemo, useState } from "react";
 import styles from "./updateProfile.module.css";
 import { PropagateLoader } from "react-spinners";
+import { safeNextPath } from "../../../../lib/safe-next";
 
 type ExperienceItem = { role?: string; company?: string; start?: string; end?: string; description?: string };
 type EducationItem = { degree?: string; institution?: string; start?: string; end?: string; description?: string };
 type UploadKind = "avatar" | "cover" | "cv";
 
 const reE164 = /^\+[1-9]\d{7,14}$/;
+
+/** "6123-4567" → "+50761234567"; si ya trae "+" o código de país, se respeta. */
+function normalizePhoneInput(v: string, defaultCc = "507"): string {
+  const raw = v.trim();
+  if (!raw) return "";
+  let d = raw.replace(/[^\d+]/g, "");
+  if (d.startsWith("00")) d = "+" + d.slice(2);
+  if (d.startsWith("+")) return "+" + d.slice(1).replace(/\D/g, "");
+  const only = d.replace(/\D/g, "");
+  return only.length <= 8 ? `+${defaultCc}${only}` : `+${only}`;
+}
 const reYYYYMM = /^\d{4}-(0[1-9]|1[0-2])$/;
 
 function compareYYYYMM(a: string, b: string) {
@@ -120,6 +132,8 @@ type UpdatePayload = {
   aboutMe?: string;
   experience?: ExperienceItem[];
   education?: EducationItem[];
+  documentType?: "cedula" | "passport";
+  documentId?: string;
 };
 
 async function apiPatchMyProfile(payload: UpdatePayload) {
@@ -149,6 +163,10 @@ export default function UpdateProfile() {
   const [coverUrl, setCoverUrl] = useState<string | null>(null);
   const [cvUrl, setCvUrl] = useState<string | null>(null);
   const [phone, setPhone] = useState("");
+  const [documentType, setDocumentType] = useState<"cedula" | "passport">("cedula");
+  const [documentId, setDocumentId] = useState("");
+  // ?completar=1 → viene de aceptar una invitación: pedimos teléfono, documento y CV.
+  const completing = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("completar") === "1";
   const [aboutMe, setAboutMe] = useState("");
   const [experience, setExperience] = useState<ExperienceItem[]>([]);
   const [education, setEducation] = useState<EducationItem[]>([]);
@@ -181,6 +199,8 @@ export default function UpdateProfile() {
         setCoverUrl(p?.cover_photo ?? null);
         setCvUrl(p?.cv_url ?? null);
         setPhone(p?.phone ?? "");
+        setDocumentType((p as any)?.document_type === "passport" ? "passport" : "cedula");
+        setDocumentId((p as any)?.document_id ?? "");
         setAboutMe(p?.about_me ?? "");
         const expList: ExperienceItem[] = Array.isArray(p?.experience) ? (p.experience as any) : [];
         const eduList: EducationItem[] = Array.isArray(p?.education) ? (p.education as any) : [];
@@ -289,10 +309,29 @@ export default function UpdateProfile() {
     setOk(null);
     try {
       if (!meId) throw new Error("No autenticado");
-      if (phone.trim() && !reE164.test(phone.trim())) {
-        setFormError("El teléfono debe estar en formato internacional E.164, por ejemplo: +573001234567.");
+      const phoneNorm = normalizePhoneInput(phone);
+      if (phoneNorm && !reE164.test(phoneNorm)) {
+        setFormError("Revisa el teléfono. Ejemplos válidos: 6123-4567 o +507 6123 4567.");
         setSaving(false);
         return;
+      }
+      if (documentId.trim().length > 30) {
+        setFormError("El número de documento es demasiado largo.");
+        setSaving(false);
+        return;
+      }
+      if (completing) {
+        const missing = [
+          !fullName.trim() && "nombre completo",
+          !phoneNorm && "teléfono",
+          !documentId.trim() && (documentType === "passport" ? "pasaporte" : "cédula"),
+          !cvUrl && !cvFile && "CV en PDF",
+        ].filter(Boolean);
+        if (missing.length) {
+          setFormError(`Para terminar tu postulación falta: ${missing.join(", ")}.`);
+          setSaving(false);
+          return;
+        }
       }
       if (!validateRows()) {
         setFormError("Corrige los campos indicados.");
@@ -332,8 +371,10 @@ export default function UpdateProfile() {
         profilePicture: newAvatarUrl ?? null,
         coverPhoto: newCoverUrl ?? null,
         cvUrl: newCvUrl ?? null,
-        phone: phone || undefined,
+        phone: phoneNorm || undefined,
         aboutMe: aboutMe || undefined,
+        documentType: documentId.trim() ? documentType : undefined,
+        documentId: documentId.trim() || undefined,
         experience: expClean,
         education: eduClean,
       };
@@ -344,7 +385,12 @@ export default function UpdateProfile() {
       setAvatarFile(null);
       setCoverFile(null);
       setCvFile(null);
+      setPhone(phoneNorm);
       setOk("Perfil actualizado correctamente.");
+      if (completing) {
+        const next = safeNextPath(new URLSearchParams(window.location.search).get("next"), "/applications");
+        window.location.assign(next);
+      }
     } catch (e: any) {
       setFormError(e?.message || "No se pudo actualizar el perfil. Intenta nuevamente.");
     } finally {
@@ -357,8 +403,12 @@ export default function UpdateProfile() {
   return (
     <>
       <header className={styles.header}>
-        <h3 className={styles.title}>Editar mi perfil</h3>
-        <p className={styles.sub}>Actualiza tu información básica, imágenes y CV.</p>
+        <h3 className={styles.title}>{completing ? "Completa tu perfil" : "Editar mi perfil"}</h3>
+        <p className={styles.sub}>
+          {completing
+            ? "Aceptaste la recomendación. Para terminar tu postulación agrega tu teléfono, tu cédula o pasaporte y tu CV en PDF."
+            : "Actualiza tu información básica, imágenes y CV."}
+        </p>
       </header>
       <form onSubmit={onSubmit} className={styles.form} noValidate>
         <div className={styles.coverBox}>
@@ -389,8 +439,30 @@ export default function UpdateProfile() {
           </div>
           <div className={styles.field}>
             <label className={styles.label}>Teléfono</label>
-            <input className={styles.input} value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+57 300 000 0000" inputMode="tel" />
-            <small className={styles.hint}>Formato internacional E.164 (ej: +573001234567)</small>
+            <input className={styles.input} value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="6123-4567 o +507 6123 4567" inputMode="tel" />
+            <small className={styles.hint}>Si no pones código de país, asumimos Panamá (+507).</small>
+          </div>
+          <div className={styles.field}>
+            <label className={styles.label}>Documento de identidad</label>
+            <div style={{ display: "flex", gap: 8 }}>
+              <select
+                className={styles.input}
+                style={{ maxWidth: 140 }}
+                value={documentType}
+                onChange={(e) => setDocumentType(e.target.value === "passport" ? "passport" : "cedula")}
+              >
+                <option value="cedula">Cédula</option>
+                <option value="passport">Pasaporte</option>
+              </select>
+              <input
+                className={styles.input}
+                value={documentId}
+                onChange={(e) => setDocumentId(e.target.value)}
+                placeholder={documentType === "passport" ? "Número de pasaporte" : "8-123-4567"}
+                maxLength={30}
+              />
+            </div>
+            <small className={styles.hint}>Solo lo ves tú. No se muestra en tu perfil público.</small>
           </div>
           <div className={styles.fieldWide}>
             <label className={styles.label}>Skills (separadas por coma)</label>
