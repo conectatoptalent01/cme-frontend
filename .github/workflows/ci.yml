@@ -1,0 +1,21 @@
+name: CI
+
+# Corre en cada pull request y en cada cambio a master.
+# Si algo falla, el pull request queda marcado en rojo y no debería aplicarse.
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Revisión de tipos (TypeScript)
+        run: npm run typecheck
