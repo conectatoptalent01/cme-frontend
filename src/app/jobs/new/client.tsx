@@ -15,7 +15,7 @@ function computeCmeFeeUSD(salaryUSD: number): FeeQuote {
   return { bracket: "≥ 5,001", feeLabel: "12% del monto", feeValue: Math.round(salaryUSD * 0.12), feePercent: 12 };
 }
 
-type EmploymentType = "full-time" | "part-time" | "services-agreement";
+type EmploymentType = "full-time" | "part-time" | "services-agreement" | "one-off" | "consulting";
 type LocationType = "remote" | "on_site" | "hybrid";
 
 function normalizeEmploymentType(v: string | null | undefined): EmploymentType {
@@ -23,6 +23,8 @@ function normalizeEmploymentType(v: string | null | undefined): EmploymentType {
   if (raw === "full-time" || raw === "full_time") return "full-time";
   if (raw === "part-time" || raw === "part_time") return "part-time";
   if (raw === "services-agreement" || raw === "service-agreement" || raw === "services" || raw === "contract") return "services-agreement";
+  if (raw === "one-off" || raw === "puntual") return "one-off";
+  if (raw === "consulting" || raw === "consultoria" || raw === "consultoría") return "consulting";
   return "full-time";
 }
 function normalizeLocationType(v: string | null | undefined): LocationType {
@@ -222,6 +224,11 @@ export default function Client() {
       return;
     }
 
+    if (!isFinite(salaryNumber) || salaryNumber <= 0) {
+      setError("Indica el monto de la posición: con él se calcula el fee de contratación.");
+      return;
+    }
+
     const employmentType = normalizeEmploymentType(form.employmentType);
     const locationType = normalizeLocationType(form.locationType);
 
@@ -324,6 +331,8 @@ export default function Client() {
                   <option value="full-time">Tiempo completo</option>
                   <option value="part-time">Medio tiempo</option>
                   <option value="services-agreement">Contrato de servicios</option>
+                  <option value="one-off">Trabajo puntual</option>
+                  <option value="consulting">Consultoría</option>
                 </select>
               </div>
 

@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import styles from './completed.module.css';
 import Link from 'next/link';
 import { PropagateLoader } from 'react-spinners';
+import { employmentTypeLabel } from "../../../../lib/employment-type";
 
 type JobMin = {
   id: string;
@@ -233,7 +234,7 @@ export default function CompletedReferralsPage() {
                           <div className={styles.jobMeta}>
                             <span>{jobOffer?.location ?? '—'}</span>
                             <span>•</span>
-                            <span>{jobOffer?.employment_type ?? '—'}</span>
+                            <span>{employmentTypeLabel(jobOffer?.employment_type)}</span>
                             <span>•</span>
                             <span className={`${styles.pill} ${styles.pillInfo}`}>{jobOffer?.status ?? '—'}</span>
                           </div>

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import styles from "./page.module.css";
 import { PropagateLoader } from "react-spinners";
+import { safeNextPath } from "../../../../lib/safe-next";
 
 export default function AuthCallback() {
   const [err, setErr] = useState<string | null>(null);
@@ -90,7 +91,7 @@ export default function AuthCallback() {
           }
         } catch { }
 
-        window.location.replace(to);
+        window.location.replace(safeNextPath(to, "/"));
       } catch (e) {
         console.error(e);
         setErr("Error en el callback de autenticación");

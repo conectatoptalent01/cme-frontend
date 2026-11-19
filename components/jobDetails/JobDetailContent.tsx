@@ -45,11 +45,28 @@ function Modal({
   );
 }
 
+type InviteResult = {
+  inviteUrl: string;
+  shareText: string;
+  expiresAt: string;
+  whatsapp: { mode: "simulated" | "meta"; status: "simulated" | "sent" | "failed"; to: string };
+};
+
+const INVITE_ERRORS: Record<string, string> = {
+  invalid_phone: "Revisa el teléfono. Ejemplos: 6123-4567 o +57 300 123 4567.",
+  phone_already_invited_for_job: "Ese teléfono ya tiene una invitación activa para esta vacante.",
+  cannot_refer_to_own_company: "No puedes referir candidatos a una vacante de tu propia empresa.",
+  name_required: "Escribe nombre y apellido.",
+};
+
+/**
+ * Referir a alguien: solo nombre, apellido y teléfono (+ por qué lo recomiendas, opcional).
+ * CME le envía la invitación por WhatsApp; el candidato completa sus datos al aceptar.
+ */
 function ReferModal({
   open,
   jobId,
   jobTitle,
-  jobUrl,
   onClose,
   disabled,
 }: {
@@ -60,330 +77,62 @@ function ReferModal({
   onClose: () => void;
   disabled?: boolean;
 }) {
-  const router = useRouter();
-  const [mode, setMode] = useState<"list" | "add">("list");
-
-  const [page, setPage] = useState(0);
-  const [limit, setLimit] = useState(10);
-
-  const {
-    data: appsData,
-    error: appsError,
-    isLoading: appsLoading,
-    mutate,
-  } = useSWR(
-    open && mode === "list" && !disabled
-      ? `/api/applications?jobOfferId=${jobId}&limit=${limit}&offset=${page * limit}`
-      : null,
-    fetcher,
-    {
-      revalidateOnFocus: false,
-      revalidateOnReconnect: false,
-      dedupingInterval: 60_000,
-      keepPreviousData: false,
-    }
-  );
-
-  const peopleBasic: Array<{
-    profileId: string;
-    name: string | null;
-    photo: string | null;
-    occupation: string | null;
-    reputation: number | null;
-    appliedAt?: string;
-  }> = useMemo(() => {
-    if (!appsData) return [];
-    if (Array.isArray(appsData.people)) return appsData.people;
-    if (Array.isArray(appsData.items)) {
-      return appsData.items.map((a: any) => ({
-        profileId: a.candidate_id,
-        name: null,
-        photo: null,
-        occupation: null,
-        reputation: null,
-        appliedAt: a.created_at,
-      }));
-    }
-    return [];
-  }, [appsData]);
-
-  const ids = useMemo(
-    () => Array.from(new Set(peopleBasic.map((p) => p.profileId).filter(Boolean))),
-    [peopleBasic]
-  );
-  const idsKey = useMemo(() => (ids.length ? ids.join(",") : ""), [ids]);
-
-  const {
-    data: profilesData,
-    error: profilesError,
-    isLoading: profilesLoading,
-  } = useSWR(
-    open && mode === "list" && idsKey && !disabled
-      ? `/api/profiles?ids=${encodeURIComponent(idsKey)}`
-      : null,
-    fetcher,
-    {
-      revalidateOnFocus: false,
-      revalidateOnReconnect: false,
-      dedupingInterval: 60_000,
-      keepPreviousData: false,
-    }
-  );
-
-  const needProfiles = !appsLoading && !appsError && !!idsKey;
-  const loadingAll = appsLoading || (needProfiles && profilesLoading);
-  const anyError = appsError || profilesError;
-
-  const profileMap: Record<
-    string,
-    { name?: string | null; photo?: string | null; occupation?: string | null; reputation?: number | null }
-  > = useMemo(() => {
-    const map: Record<string, any> = {};
-    const arr = profilesData?.profiles ?? [];
-    for (const p of arr) {
-      const first =
-        p.first_name ?? p.firstName ?? p.given_name ?? p.givenName ?? null;
-      const last =
-        p.last_name ?? p.lastName ?? p.family_name ?? p.familyName ?? null;
-      const joined = [first, last].filter(Boolean).join(" ").trim() || null;
-      const emailLocal =
-        typeof p.email === "string" && p.email.includes("@")
-          ? p.email.split("@")[0]
-          : null;
-      const name =
-        p.full_name ?? p.fullName ?? p.name ?? joined ?? p.username ?? emailLocal ?? null;
-      const photo =
-        p.profile_picture ?? p.profilePicture ?? p.avatar ?? p.photo ?? null;
-      const occupation = p.occupation ?? p.title ?? p.headline ?? null;
-      const reputation =
-        p.reputation_score ?? p.reputationScore ?? p.reputation ?? null;
-      if (p.id) map[p.id] = { name, photo, occupation, reputation };
-    }
-    return map;
-  }, [profilesData]);
-
-  const people = useMemo(() => {
-    if (!peopleBasic.length) return [];
-    if (!ids.length) return peopleBasic;
-    return peopleBasic.map((p) => {
-      const ext = profileMap[p.profileId] || {};
-      return {
-        ...p,
-        name: ext.name ?? p.name,
-        photo: ext.photo ?? p.photo,
-        occupation: ext.occupation ?? p.occupation,
-        reputation: ext.reputation ?? p.reputation,
-      };
-    });
-  }, [peopleBasic, profileMap, ids.length]);
-
-  const [referralCode, setReferralCode] = useState<string | null>(null);
-  const [genLoading, setGenLoading] = useState(false);
-  const [genError, setGenError] = useState<string | null>(null);
-
-  const [referBusyId, setReferBusyId] = useState<string | null>(null);
-  const [referMsg, setReferMsg] = useState<string | null>(null);
-  const [referError, setReferError] = useState<string | null>(null);
-
-  const [contactName, setContactName] = useState("");
-  const [contactPhone, setContactPhone] = useState("");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<InviteResult | null>(null);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     if (!open) {
-      setReferralCode(null);
-      setGenError(null);
-      setGenLoading(false);
-      setMode("list");
-      setContactName("");
-      setContactPhone("");
-      setReferBusyId(null);
-      setReferMsg(null);
-      setReferError(null);
-      setPage(0);
+      setFirstName(""); setLastName(""); setPhone(""); setNote("");
+      setBusy(false); setError(null); setResult(null); setCopied(false);
     }
   }, [open]);
 
-  useEffect(() => {
-    setPage(0);
-  }, [jobId]);
-
-  function renderStars(value: number | null | undefined, max = 5) {
-    if (value == null) return null;
-    const rating = Math.min(5, Math.max(0, value));
-    const rounded = Math.round(rating);
-    const stars = [];
-    for (let i = 1; i <= max; i++) {
-      stars.push(<span key={i}>{i <= rounded ? "★" : "☆"}</span>);
+  async function sendInvite(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    if (!firstName.trim() || !lastName.trim() || !phone.trim()) {
+      setError("Completa nombre, apellido y teléfono.");
+      return;
     }
-    return (
-      <span className={styles.stars}>
-        {stars}
-        <span className={styles.starsNumber}>({rating.toFixed(1)})</span>
-      </span>
-    );
-  }
-
-  async function createNotificationAfterReferral(params: {
-    candidateId: string;
-    jobId: string;
-    jobTitle: string;
-    jobUrl: string;
-    payload: any;
-  }) {
-    const { candidateId, jobId, jobTitle, jobUrl, payload } = params;
-
-    const referralCode =
-      payload?.code ??
-      payload?.referral_code ??
-      payload?.referral?.referral_code ??
-      payload?.data?.referral_code ??
-      null;
-
-    const referralId = payload?.id ?? payload?.referral?.id ?? payload?.data?.id ?? null;
-
-    const rawTitle = `Has sido referido a "${jobTitle ?? ""}"`.trim();
-    const codeLine = referralCode
-      ? `Tu código de referido es: ${referralCode}.`
-      : `Te han referido a la oferta.`;
-    const rawMessage = `${codeLine}
-Para más detalles, visita: ${jobUrl}`.trim();
-
-    const title = rawTitle.slice(0, 180);
-    const message = rawMessage.slice(0, 5000);
-
-    const uuidRe =
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-    if (!uuidRe.test(candidateId)) return;
-    if (!title || !message) return;
-
-    const body = {
-      userId: candidateId,
-      user_id: candidateId,
-      title,
-      message,
-      notificationType: "recommendation",
-      notification_type: "recommendation",
-      channel: "system",
-      relatedId: referralId || jobId,
-      related_id: referralId || jobId,
-    };
-
+    setBusy(true);
     try {
-      const res = await fetch("/api/notifications", {
+      const res = await fetch("/api/invitations", {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify(body),
+        credentials: "include",
+        body: JSON.stringify({ jobOfferId: jobId, firstName, lastName, phone, note: note.trim() || undefined }),
       });
-      if (!res.ok) return;
-      await res.text().catch(() => "");
-    } catch {
-    }
-  }
-
-  async function handleGenerateCode() {
-    setGenLoading(true);
-    setGenError(null);
-    try {
-      const res = await fetch(`/api/referrals`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ jobOfferId: jobId }),
-      });
-
-      const raw = await res.text();
-      let payload: any = null;
-      try { payload = raw ? JSON.parse(raw) : null; } catch { }
-
-      if (res.status === 401) throw new Error("No autorizado. Inicia sesión para continuar.");
-      if (!res.ok || !payload?.code) {
-        throw new Error(payload?.message || payload?.error || "No se pudo generar el código. Intenta nuevamente.");
-      }
-
-      const code = String(payload.code);
-      setReferralCode(code);
-      try { await navigator.clipboard.writeText(code); } catch { }
-    } catch (e: any) {
-      setGenError(e?.message || "Error generando el código.");
-    } finally {
-      setGenLoading(false);
-    }
-  }
-
-  async function handleReferCandidate(candidateId: string) {
-    setReferError(null);
-    setReferMsg(null);
-    setReferBusyId(candidateId);
-    try {
-      const res = await fetch(`/api/referrals`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ jobOfferId: jobId, candidateId }),
-      });
-
-      const raw = await res.text();
-      let payload: any = null;
-      try { payload = raw ? JSON.parse(raw) : null; } catch { }
-
-      if (res.status === 401) return;
-
+      const json = await res.json().catch(() => ({}));
+      if (res.status === 401) { setError("Inicia sesión para referir."); return; }
       if (!res.ok) {
-        const msg = String(payload?.error || payload?.message || "");
-        if (/already|exists|conflict|409|23505/i.test(msg)) {
-          setReferError("Ya existe una referencia para este candidato en esta oferta.");
-        } else {
-          setReferError("No se pudo crear la referencia. Intenta nuevamente.");
-        }
+        setError(INVITE_ERRORS[json?.error] || "No se pudo crear la invitación. Intenta de nuevo.");
         return;
       }
-
-      const code =
-        payload?.code ?? payload?.referral_code ?? payload?.referral?.referral_code ?? null;
-
-      const codeLine = code ? ` Código: ${code}.` : "";
-      setReferMsg(`Referencia creada correctamente.${codeLine}`);
-
-      await createNotificationAfterReferral({
-        candidateId,
-        jobId,
-        jobTitle,
-        jobUrl,
-        payload,
-      });
-
-      mutate?.();
-    } catch (e: any) {
-      setReferError(e?.message || "Error creando la referencia.");
+      setResult(json as InviteResult);
+    } catch {
+      setError("Problema de conexión. Intenta de nuevo.");
     } finally {
-      setReferBusyId(null);
+      setBusy(false);
     }
   }
 
-  function toWaNumber(input: string): string | null {
-    const digits = (input || "").replace(/\D/g, "");
-    if (digits.length < 8) return null;
-    return digits;
+  async function copyLink() {
+    if (!result) return;
+    try { await navigator.clipboard.writeText(result.inviteUrl); setCopied(true); } catch { }
   }
 
-  function handleOpenWhatsApp() {
-    if (!referralCode) {
-      setGenError("Primero genera el código de referido.");
-      return;
-    }
-    const waNumber = toWaNumber(contactPhone);
-    if (!waNumber) {
-      setGenError("Teléfono inválido. Incluye código de país (ej: 573001234567).");
-      return;
-    }
-    const greeting = contactName?.trim() ? `Hola ${contactName.trim()}` : "Hola";
-    const msg = `${greeting}
-Vi una oferta que te puede interesar: ${jobTitle}
-${jobUrl}
-
-Este es tu codigo de referido: ${referralCode}
-Úsalo al aplicar para que quede asociada la recomendación.`;
-    const url = `https://wa.me/${waNumber}?text=${encodeURIComponent(msg)}`;
-    window.open(url, "_blank", "noopener,noreferrer");
+  /** Abre el WhatsApp de quien refiere con el mismo mensaje y el enlace de la invitación. */
+  function shareFromMyWhatsApp() {
+    if (!result) return;
+    const digits = phone.replace(/\D/g, "");
+    const to = digits.length <= 8 ? `507${digits}` : digits;
+    window.open(`https://wa.me/${to}?text=${encodeURIComponent(result.shareText)}`, "_blank", "noopener,noreferrer");
   }
 
   if (!open) return null;
@@ -392,9 +141,7 @@ Este es tu codigo de referido: ${referralCode}
     return (
       <div className={styles.modalOverlay} role="dialog" aria-modal="true">
         <div className={styles.modalCard}>
-          <div className={styles.text}>
-            Esta acción no está disponible para tu rol.
-          </div>
+          <div className={styles.text}>No puedes referir candidatos a una vacante de tu propia empresa.</div>
           <div className={styles.modalActions}>
             <button className={styles.secundaryBtn} onClick={onClose}>Cerrar</button>
           </div>
@@ -402,231 +149,80 @@ Este es tu codigo de referido: ${referralCode}
       </div>
     );
   }
-
-  if (loadingAll) {
-    return (
-      <div className={styles.modalOverlay} role="dialog" aria-modal="true">
-        <div className={styles.modalCard}>
-          <div className={styles.loading}>
-            <PropagateLoader />
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (anyError) {
-    return (
-      <div className={styles.modalOverlay} role="dialog" aria-modal="true">
-        <div className={styles.modalCard}>
-          <div className={styles.error}>No se pudo cargar la lista de interesados.</div>
-          <div className={styles.modalActions}>
-            <button className={styles.secundaryBtn} onClick={onClose}>Cerrar</button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  const peopleFinal = (people || []).map((p) => ({
-    ...p,
-    name: p.name ?? `ID ${short(p.profileId)}`,
-  }));
-
-  const canNext = peopleBasic.length >= limit;
 
   return (
-    <div className={styles.modalOverlay} role="dialog" aria-modal="true">
+    <div className={styles.modalOverlay} role="dialog" aria-modal="true" aria-label="Referir a un candidato">
       <div className={styles.modalCard}>
-        <div className={styles.modalHeader}>
-          <h3 className={styles.modalTitle}>Interesados</h3>
-        </div>
-
-        <div className={styles.modeSwitch}>
-          <button
-            className={styles.primaryBtn}
-            onClick={() => setMode("list")}
-            aria-pressed={mode === "list"}
-          >
-            Ver interesados
-          </button>
-          <button
-            className={styles.secundaryBtn}
-            onClick={() => setMode("add")}
-            aria-pressed={mode === "add"}
-          >
-            Agregar referido
-          </button>
-        </div>
-
-        {mode === "list" ? (
-          <>
-            {referMsg && (
-              <div className={styles.text} style={{ color: "#065f46" }}>
-                {referMsg}
-              </div>
-            )}
-            {referError && <div className={styles.error}>{referError}</div>}
-
-            {peopleFinal.length === 0 ? (
-              <p className={styles.text}>Aún no hay interesados para esta oferta.</p>
-            ) : (
-              <>
-                <ul className={styles.list}>
-                  {peopleFinal.map((p) => (
-                    <div key={p.profileId} className={styles.personLink}>
-                      <Image
-                        src={p.photo || "/images/placeholders/company.png"}
-                        width={50}
-                        height={50}
-                        alt={p.name ?? p.profileId}
-                        className={styles.avatar}
-                      />
-                      <div className={styles.personInfo}>
-                        <a
-                          href={`/profiles/users?id=${p.profileId}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className={styles.personName}
-                        >
-                          {p.name}
-                        </a>
-                        <div className={styles.personSub}>
-                          {p.occupation ?? "—"}
-                          {p.appliedAt ? (
-                            <span className={styles.personAppliedAt}>
-                              {" · "}Aplicó: {new Date(p.appliedAt).toLocaleString()}
-                            </span>
-                          ) : null}
-                        </div>
-                      </div>
-                      <button
-                        className={styles.modalReferButton}
-                        onClick={() => handleReferCandidate(p.profileId)}
-                        disabled={referBusyId === p.profileId}
-                        aria-busy={referBusyId === p.profileId}
-                        title="Crear referencia para este candidato"
-                      >
-                        {referBusyId === p.profileId ? "Creando..." : "Referir"}
-                      </button>
-                    </div>
-                  ))}
-                </ul>
-
-                <div className={styles.pager}>
-                  <div className={styles.pageSize}>
-                    <label className={styles.small} htmlFor="psize">
-                      Mostrar
-                    </label>
-                    <select
-                      id="psize"
-                      className={styles.select}
-                      value={limit}
-                      onChange={(e) => {
-                        setPage(0);
-                        setLimit(parseInt(e.target.value, 10) || 10);
-                      }}
-                    >
-                      <option value={10}>10</option>
-                      <option value={25}>25</option>
-                      <option value={50}>50</option>
-                    </select>
-                  </div>
-
-                  <div className={styles.pageNav}>
-                    <button
-                      className={styles.secundaryBtn}
-                      onClick={() => setPage((p) => Math.max(0, p - 1))}
-                      disabled={page === 0}
-                    >
-                      Anterior
-                    </button>
-
-                    <span className={styles.pageLabel}>Página {page + 1}</span>
-
-                    <button
-                      className={styles.secundaryBtn}
-                      onClick={() => setPage((p) => p + 1)}
-                      disabled={!canNext}
-                      title={!canNext ? "No hay más resultados" : ""}
-                    >
-                      Siguiente
-                    </button>
-                  </div>
-                </div>
-              </>
-            )}
-          </>
-        ) : (
-          <div className={styles.referSection}>
+        {!result ? (
+          <form className={styles.referSection} onSubmit={sendInvite} noValidate>
             <p className={styles.text}>
-              Comparte esta oferta con tu contacto. Puedes generar un{" "}
-              <b>código de referido</b> para asociar la postulación a tu
-              recomendación, y enviar un mensaje de WhatsApp personalizado con
-              los detalles.
+              Recomienda a alguien para <b>{jobTitle}</b>. Solo necesitamos su nombre y su WhatsApp:
+              le enviaremos la invitación y él completará sus datos al aceptar.
             </p>
 
             <div className={styles.formGrid} style={{ width: "100%" }}>
               <label className={styles.formField}>
-                <span>Nombre del contacto</span>
-                <input
-                  type="text"
-                  placeholder="Ej: Laura Pérez"
-                  value={contactName}
-                  onChange={(e) => setContactName(e.target.value)}
-                  className={styles.input}
-                />
+                <span>Nombre</span>
+                <input className={styles.input} value={firstName} onChange={(e) => setFirstName(e.target.value)}
+                  placeholder="Ej: Laura" maxLength={80} autoComplete="off" />
               </label>
-
               <label className={styles.formField}>
-                <span>Teléfono (incluye código de país)</span>
-                <input
-                  type="tel"
-                  placeholder="Ej: 573001234567"
-                  value={contactPhone}
-                  onChange={(e) => setContactPhone(e.target.value)}
-                  className={styles.input}
-                  inputMode="tel"
-                />
+                <span>Apellido</span>
+                <input className={styles.input} value={lastName} onChange={(e) => setLastName(e.target.value)}
+                  placeholder="Ej: Pérez" maxLength={80} autoComplete="off" />
+              </label>
+              <label className={styles.formField}>
+                <span>Teléfono con WhatsApp</span>
+                <input className={styles.input} type="tel" inputMode="tel" value={phone}
+                  onChange={(e) => setPhone(e.target.value)} placeholder="6123-4567 o +57 300 123 4567" />
+              </label>
+              <label className={styles.formField}>
+                <span>¿Por qué lo recomiendas? (opcional)</span>
+                <input className={styles.input} value={note} onChange={(e) => setNote(e.target.value)}
+                  placeholder="Ej: trabajamos juntos 3 años, es excelente con clientes" maxLength={280} />
               </label>
             </div>
+
+            {error && <div className={styles.error}>{error}</div>}
 
             <div className={styles.modalSubActions}>
-              <button
-                type="button"
-                className={styles.primaryBtn}
-                onClick={handleGenerateCode}
-                disabled={genLoading}
-                aria-busy={genLoading}
-              >
-                {genLoading ? "Generando..." : "Generar código de referido"}
+              <button type="submit" className={styles.primaryBtn} disabled={busy} aria-busy={busy}>
+                {busy ? "Enviando..." : "Enviar invitación"}
               </button>
             </div>
-
-            {referralCode && (
-              <div className={styles.referCode} style={{ marginTop: 8 }}>
-                <b>CÓDIGO GENERADO</b> <code>{referralCode}</code>
-                <p>(copiado al portapapeles)</p>
-
-                <button
-                  type="button"
-                  className={styles.secundaryBtnWPP}
-                  onClick={handleOpenWhatsApp}
-                  disabled={!contactPhone.trim()}
-                >
-                  Enviar mensaje de WhatsApp
-                </button>
-              </div>
+          </form>
+        ) : (
+          <div className={styles.referSection}>
+            {result.whatsapp.status === "sent" ? (
+              <p className={styles.text}>
+                Listo: le enviamos la invitación por WhatsApp a <b>{firstName}</b> ({result.whatsapp.to}).
+                Te avisaremos cuando responda.
+              </p>
+            ) : (
+              <p className={styles.text}>
+                Invitación creada para <b>{firstName}</b>.{" "}
+                {result.whatsapp.status === "simulated"
+                  ? "El envío automático por WhatsApp todavía no está activo: envíasela tú desde tu WhatsApp."
+                  : "No pudimos enviarla automáticamente por WhatsApp: envíasela tú desde tu WhatsApp."}
+              </p>
             )}
 
-            {genError && <div className={styles.error}>{genError}</div>}
+            <div className={styles.referCode} style={{ marginTop: 8 }}>
+              <button type="button" className={styles.secundaryBtnWPP} onClick={shareFromMyWhatsApp}>
+                Enviar desde mi WhatsApp
+              </button>
+              <button type="button" className={styles.secundaryBtn} onClick={copyLink} style={{ marginLeft: 8 }}>
+                {copied ? "Enlace copiado" : "Copiar enlace"}
+              </button>
+              <p className={styles.small}>
+                La invitación vence el {new Date(result.expiresAt).toLocaleDateString("es-PA", { day: "numeric", month: "long" })}.
+              </p>
+            </div>
           </div>
         )}
 
         <div className={styles.modalActions}>
-          <button className={styles.secundaryBtn} onClick={onClose}>
-            Cerrar
-          </button>
+          <button className={styles.secundaryBtn} onClick={onClose}>Cerrar</button>
         </div>
       </div>
     </div>
