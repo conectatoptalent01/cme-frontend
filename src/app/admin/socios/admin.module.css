@@ -1,0 +1,20 @@
+.page { max-width: 920px; margin: 0 auto; padding: 32px 16px; color: #152148; }
+.header { margin-bottom: 16px; }
+.title { margin: 0 0 6px; font-size: 24px; }
+.sub, .muted { color: #6b7280; font-size: 14px; margin: 0; }
+.tabs { display: flex; gap: 8px; margin: 16px 0; }
+.tab { padding: 8px 14px; border-radius: 999px; border: 1px solid #d1d5db; background: #fff; cursor: pointer; font-weight: 600; color: #374151; }
+.tabActive { background: #152148; border-color: #152148; color: #fff; }
+.list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 12px; }
+.item { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+.row { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.name { font-weight: 700; color: #152148; }
+.stats { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; font-size: 14px; }
+.message { margin: 0; padding: 10px 14px; border-left: 3px solid #152148; background: #f9fafb; font-style: italic; }
+.review { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.input { flex: 1 1 260px; padding: 9px 12px; border: 1px solid #d1d5db; border-radius: 8px; font: inherit; }
+.primary, .secondary { padding: 9px 14px; border-radius: 8px; font-weight: 600; cursor: pointer; }
+.primary { border: none; background: #152148; color: #fff; }
+.secondary { border: 1px solid #b91c1c; background: transparent; color: #b91c1c; }
+.primary:disabled, .secondary:disabled { opacity: 0.6; cursor: default; }
+.error { color: #b91c1c; }
