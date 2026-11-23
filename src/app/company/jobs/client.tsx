@@ -4,6 +4,8 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import styles from './companyJobs.module.css';
 import Link from 'next/link';
 import { PropagateLoader } from 'react-spinners';
+import StarRating from "../../../../components/rating/StarRating";
+import { backend } from "../../../../lib/backend";
 
 const FEE_COP = 10000;
 
@@ -57,7 +59,12 @@ type ReferralRow = {
     candidate_id?: string | null;
     headhunter_id: string;
     job_offer_id: string;
+    /** Estrellas que la empresa le dio a quien recomendó (Fase 4). */
+    rating_stars?: number | null;
 };
+
+/** Estados en los que la empresa ya decidió y puede calificar a quien recomendó. */
+const RATEABLE = new Set(['shortlist', 'rejected', 'hired']);
 
 const LINEAR_FLOW: string[] = ['accepted_by_candidate', 'reviewing', 'shortlist', 'hired'];
 
@@ -366,6 +373,9 @@ export default function Client() {
         if (!freshReferral || !freshJob) return;
 
         setModalRefs(prev => prev.map(r => r.id === freshReferral.id ? { ...r, status: 'hired' } : r));
+        if (freshReferral.headhunter_id && !(freshReferral as ReferralRow).rating_stars) {
+            openRating({ ...(freshReferral as ReferralRow), status: 'hired' });
+        }
 
         const candId = freshReferral.candidate_id || undefined;
         const candName = candId ? (candMapRef.current[candId]?.name || '') : '';
@@ -440,6 +450,40 @@ export default function Client() {
         }
     }
 
+    /* ---------- Calificar a quien recomendó (Fase 4) ---------- */
+    const [rateFor, setRateFor] = useState<ReferralRow | null>(null);
+    const [rateStars, setRateStars] = useState(0);
+    const [rateComment, setRateComment] = useState('');
+    const [rateSaving, setRateSaving] = useState(false);
+    const [rateError, setRateError] = useState<string | null>(null);
+
+    function openRating(ref: ReferralRow) {
+        setRateFor(ref);
+        setRateStars(ref.rating_stars ?? 0);
+        setRateComment('');
+        setRateError(null);
+    }
+
+    async function saveRating() {
+        if (!rateFor || rateStars < 1) { setRateError('Elige de 1 a 5 estrellas.'); return; }
+        setRateSaving(true);
+        setRateError(null);
+        try {
+            await backend(`referrals/${encodeURIComponent(rateFor.id)}/rating`, {
+                method: 'POST',
+                body: { stars: rateStars, ...(rateComment.trim() ? { comment: rateComment.trim() } : {}) },
+            });
+            setModalRefs(prev => prev.map(r => r.id === rateFor.id ? { ...r, rating_stars: rateStars } : r));
+            setRateFor(null);
+        } catch (e: any) {
+            setRateError(e?.message === 'decide_on_candidate_before_rating'
+                ? 'Primero decide sobre el candidato (shortlist, rechazado o contratado).'
+                : 'No se pudo guardar la calificación. Intenta de nuevo.');
+        } finally {
+            setRateSaving(false);
+        }
+    }
+
     async function setReferralStatus(referralId: string, newStatus: string, candidateId?: string) {
         try {
             if (newStatus.toLowerCase() === 'hired') {
@@ -477,6 +521,9 @@ export default function Client() {
                     await createNotificationForHeadhunter({ headhunterId: refRow.headhunter_id, candidateName: candName, jobTitle: modalJob.title, newStatus, jobId: modalJob.id });
                 }
             } catch { }
+            if (RATEABLE.has(newStatus.toLowerCase()) && refRow?.headhunter_id && !refRow.rating_stars) {
+                openRating({ ...refRow, status: newStatus });
+            }
         } catch (e: any) {
             setModalError(e?.message || 'No se pudo actualizar el estado');
         } finally {
@@ -609,6 +656,15 @@ export default function Client() {
                                                     {r.headhunter_id && (
                                                         <a className={styles.secBtn} href={`/profiles/users?id=${r.headhunter_id}`} target="_blank" rel="noopener noreferrer">Ver referidor</a>
                                                     )}
+                                                    {r.headhunter_id && RATEABLE.has(v) && (
+                                                        r.rating_stars
+                                                            ? (
+                                                                <button className={styles.secBtn} onClick={() => openRating(r)} title="Cambiar calificación del referidor">
+                                                                    <StarRating value={r.rating_stars} size={14} label="Calificación del referidor" />
+                                                                </button>
+                                                            )
+                                                            : <button className={styles.secBtn} onClick={() => openRating(r)}>Calificar referidor</button>
+                                                    )}
                                                     <button className={styles.primaryBtn} onClick={() => setExpandedReferralId(expandedReferralId === r.id ? null : r.id)}>
                                                         {expandedReferralId === r.id ? 'Ocultar proceso' : 'Gestionar proceso'}
                                                     </button>
@@ -667,6 +723,41 @@ export default function Client() {
                             <button className={styles.pagerBtn} onClick={() => modalPage > 1 && modalGoToPage(modalPage - 1)} disabled={modalPage <= 1 || modalLoading}>← Anterior</button>
                             <span className={styles.pagerInfo}>Página {modalPage}</span>
                             <button className={styles.pagerBtn} onClick={() => modalGoToPage(modalPage + 1)} disabled={modalLoading}>Siguiente →</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {rateFor && (
+                <div className={styles.modalOverlay} role="dialog" aria-modal="true" aria-label="Calificar a quien recomendó" style={{ zIndex: 10000 }} onClick={() => !rateSaving && setRateFor(null)}>
+                    <div className={styles.modalCard} onClick={(e) => e.stopPropagation()} style={{ maxWidth: 480 }}>
+                        <div className={styles.modalHeader}>
+                            <div className={styles.modalTitle}>¿Qué tan buena fue esta recomendación?</div>
+                            <button className={styles.modalClose} onClick={() => setRateFor(null)} disabled={rateSaving}>✕</button>
+                        </div>
+                        <div className={styles.modalBody}>
+                            <p style={{ marginBottom: 12 }}>
+                                Califica a quien te recomendó a{' '}
+                                <b>{(rateFor.candidate_id && candidateMap[rateFor.candidate_id]?.name) || 'este candidato'}</b>.
+                                Tu calificación construye su reputación en CME y no la ve el candidato.
+                            </p>
+                            <div style={{ marginBottom: 12 }}>
+                                <StarRating value={rateStars} onChange={setRateStars} size={32} label="Estrellas para el referidor" />
+                            </div>
+                            <textarea
+                                className={styles.rateTextarea}
+                                maxLength={500}
+                                placeholder="Comentario opcional: ¿el perfil se ajustaba a lo que buscabas?"
+                                value={rateComment}
+                                onChange={(e) => setRateComment(e.target.value)}
+                            />
+                            {rateError && <div className={styles.error} style={{ marginTop: 8 }}>{rateError}</div>}
+                        </div>
+                        <div className={styles.modalFooter}>
+                            <button className={styles.secBtn} onClick={() => setRateFor(null)} disabled={rateSaving}>Ahora no</button>
+                            <button className={styles.primaryBtn} onClick={saveRating} disabled={rateSaving || rateStars < 1}>
+                                {rateSaving ? 'Guardando…' : 'Guardar calificación'}
+                            </button>
                         </div>
                     </div>
                 </div>

@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import styles from './active.module.css';
 import { PropagateLoader } from 'react-spinners';
 import { employmentTypeLabel } from "../../../../lib/employment-type";
+import ReputationCard from "../../../../components/reputation/ReputationCard";
 
 type Referral = {
     id: string;
@@ -264,6 +265,8 @@ export default function MyReferralsPage() {
                     <h1 className={styles.title}>Mis referencias</h1>
                     <p className={styles.subtitle}>Revisa el estado de tus referidos y contáctalos rápido.</p>
                 </header>
+
+                <ReputationCard />
 
                 {loading ? (
                     <div className={styles.loading}><PropagateLoader /></div>

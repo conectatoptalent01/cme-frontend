@@ -614,3 +614,14 @@
         display: none;
     }
 }
+/* Fase 4: comentario al calificar a quien recomendó */
+.rateTextarea {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 72px;
+    padding: 10px 12px;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    font: inherit;
+    resize: vertical;
+}

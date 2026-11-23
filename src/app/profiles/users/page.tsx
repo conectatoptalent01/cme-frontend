@@ -4,6 +4,8 @@ import Link from "next/link";
 import { headers as nextHeaders, cookies as nextCookies } from "next/headers";
 import Navbar from "../../../../components/navbar/navbar";
 import styles from "./userProfile.module.css";
+import ProfileReputation from "../../../../components/reputation/ProfileReputation";
+import ConfirmedReferences from "../../../../components/workReferences/ConfirmedReferences";
 
 export const dynamic = "force-dynamic";
 
@@ -170,6 +172,7 @@ export default async function Page(context: any) {
                     profile.email.split("@")[0] ||
                     "Usuario"}
                 </h2>
+                {id && <ProfileReputation userId={id} />}
               </div>
             </div>
 
@@ -181,6 +184,8 @@ export default async function Page(context: any) {
                 <p className={styles.muted}>Sin descripción</p>
               )}
             </div>
+
+            {id && <ConfirmedReferences candidateId={id} sectionClassName={styles.section} />}
 
             <div className={styles.section}>
               <h3>Habilidades</h3>
